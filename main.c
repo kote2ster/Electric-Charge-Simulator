@@ -1,5 +1,13 @@
-/** @file main.c */
-
+/** @file main.c  */
+/** [TOC]
+ * @mainpage Electric charge simulator program
+ * @section intro_sec Introduction
+ *  @author    Akos Kote
+ *  @version   1.0
+ *  @date      Last Modification: 2015.03.21.
+ *
+ * [GitHub Project](https://github.com/kote2ster/Electric-Charge-Simulator "GitHub Project")
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,11 +34,10 @@ struct _CHARGES {
     int ElecChrg;     /**< Each charges' Electric charge (multiplier) with sign (+/-) */
     double PosX,PosY; /**< Each charges' position (x,y) */
     double VelX,VelY; /**< Each charges' velocity (x,y) */
-} *Charges;
+} *Charges; /**< Charges */
 int NumOfCharges;     /**< Number of charges currently in the room */
-/** 2 Click event and 3 Mouse state */
-enum {MLEFTCLCK,MRIGHTCLCK} MOUSESTATE;
-enum {SELECT_DEL,ADD_CHRG,MOVE_CHRG,SETVEL_CHRG} EVENTSTATE;
+enum {MLEFTCLCK,MRIGHTCLCK} MOUSESTATE; /** 2 Click events */
+enum {SELECT_DEL,ADD_CHRG,MOVE_CHRG,SETVEL_CHRG} EVENTSTATE; /** and 4 modes */
 typedef struct {
     void (*FuncCall)(int*,int*,int*,int*,int*);
 } CONTROL; /**< General function call depending on event */
@@ -40,7 +47,7 @@ char FileReadOK;     /**< Flag for successful read from file */
 TCOD_key_t key;      /**< Keyboard state handle */
 TCOD_mouse_t mouse;  /**< Mouse state handle */
 TCOD_event_t event;  /**< Event handle */
-uint32 TimeStep,Time;/**< Timing handle */
+uint32 Time,TimeStep;/**< Timing handle */
 
 /** Using Coulomb's law and Fx=F*cos(a)
   * @param q1/q2 - two charges' electric size
