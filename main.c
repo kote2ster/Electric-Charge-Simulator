@@ -1,3 +1,5 @@
+/** @file main.c */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,34 +10,31 @@
 #define TIME 0 /**< Min time between calculations (in ms) */
 #define FPS 25
 #define DEFMOUSEFORCE 100 /**< Default mouse force multiplier */
-#define CHARGES_SIZE 4 /**< Number of charges */
-#define X_SIZE 160 /**< Screen width in chars */
-#define Y_SIZE 80 /**< Screen height in chars  */
-/**< Define this, to calculate with many more charges (visible room expanded omnidirectionally), this can be refined with _ITER_ defines... */
-//#define INFINTE_CHARGES
-/**< Define this, to place all charges in a rectangle shape, this can be refined with STEP_ defines... */
+#define DEF_CHARGES_SIZE 4 /**< Default number of charges */
+#define DEF_X_SIZE 160 /**< Default Screen width in chars */
+#define DEF_Y_SIZE 80  /**< Default Screen height in chars  */
+#define CONFIG_FILE "config.ini" /**< Config file name */
+#define VERSION "v1.0" /**< Version number */
+/** Define this, to place all charges in a rectangle shape, this can be refined with STEP_ defines... */
 //#define IN_A_RECTANGLE
 
-#define MIN_ITER_X -X_SIZE/20
-#define MAX_ITER_X X_SIZE/20
-#define MIN_ITER_Y -Y_SIZE/20
-#define MAX_ITER_Y Y_SIZE/20
-/**< STEP_ defines for placing charges in a rectangle, leaving STEP_ space between each other */
+/** STEP_ defines for placing charges in a rectangle, leaving STEP_ space between each other */
 #define STEP_X (X_SIZE/10)
 #define STEP_Y (Y_SIZE/10)
 
 struct _CHARGES {
-    int ElecChrg;     /**< Each charges' Electric charge with sign (+/-) */
+    int ElecChrg;     /**< Each charges' Electric charge (multiplier) with sign (+/-) */
     double PosX,PosY; /**< Each charges' position (x,y) */
     double VelX,VelY; /**< Each charges' velocity (x,y) */
 } *Charges;
 int NumOfCharges;     /**< Number of charges currently in the room */
-/** 2 Click event 3 Mouse state */
+/** 2 Click event and 3 Mouse state */
 enum {MLEFTCLCK,MRIGHTCLCK} MOUSESTATE;
 enum {SELECT_DEL,ADD_CHRG,MOVE_CHRG,SETVEL_CHRG} EVENTSTATE;
 typedef struct {
     void (*FuncCall)(int*,int*,int*,int*,int*);
-} CONTROL;
+} CONTROL; /**< General function call depending on event */
+int X_SIZE=DEF_X_SIZE,Y_SIZE=DEF_Y_SIZE; /**< Screen size in chars */
 int MouseForce=DEFMOUSEFORCE; /**< Mouse force multiplier */
 char FileReadOK;     /**< Flag for successful read from file */
 TCOD_key_t key;      /**< Keyboard state handle */
@@ -43,40 +42,54 @@ TCOD_mouse_t mouse;  /**< Mouse state handle */
 TCOD_event_t event;  /**< Event handle */
 uint32 TimeStep,Time;/**< Timing handle */
 
-/** Using Coulomb's law and Fx=F*cos(a) */
+/** Using Coulomb's law and Fx=F*cos(a)
+  * @param q1/q2 - two charges' electric size
+  * @param x0/y0 - x/y distance between two charges
+  */
 double CalculateForceX(int q1,int q2,double x0,double y0) {
-    double ret=0;
-#ifdef INFINTE_CHARGES
+    double ret=0,dist;
+    double minDist=sqrt(x0*x0+y0*y0);
     int x,y;
-    for(x=MIN_ITER_X; x<MAX_ITER_X; x++) {
-        for(y=MIN_ITER_Y; y<MAX_ITER_Y; y++) {
-            if(x0!=0||y0!=0||x!=0||y!=0)
-                ret+=K_COEFF*q1*q2*(x0+x*X_SIZE)/( ( (x0+x*X_SIZE)*(x0+x*X_SIZE)+(y0+y*Y_SIZE)*(y0+y*Y_SIZE) ) *
-                                                   sqrt( (x0+x*X_SIZE)*(x0+x*X_SIZE)+(y0+y*Y_SIZE)*(y0+y*Y_SIZE) ) );
+    // Default is the non-wrapping distance of two charges
+    if(x0!=0||y0!=0) ret=K_COEFF*q1*q2*(x0)/( ( (x0)*(x0)+(y0)*(y0) ) * sqrt( (x0)*(x0)+(y0)*(y0) ) );
+    // Check if closest charge is wrapped to the other side
+    for(x=-1; x<2; x++) {
+        for(y=-1; y<2; y++) {
+            if(x0!=0||y0!=0||x!=0||y!=0) {
+                dist=sqrt( (x0+x*X_SIZE)*(x0+x*X_SIZE)+(y0+y*Y_SIZE)*(y0+y*Y_SIZE) );
+                if(dist<minDist) { ret=K_COEFF*q1*q2*(x0+x*X_SIZE)/( dist*dist*dist ); minDist=dist; }
+            }
         }
     }
-#else
-    if(x0!=0||y0!=0) ret+=K_COEFF*q1*q2*(x0)/( ( (x0)*(x0)+(y0)*(y0) ) * sqrt( (x0)*(x0)+(y0)*(y0) ) );
-#endif // INFINTE_CHARGES
     return ret;
 }
-/** Using Coulomb's law and Fy=F*sin(a) */
+/** Using Coulomb's law and Fy=F*sin(a)
+  * @param q1/q2 - two charges' electric size
+  * @param x0/y0 - x/y distance between two charges
+  */
 double CalculateForceY(int q1,int q2,double x0,double y0) {
-    double ret=0;
-#ifdef INFINTE_CHARGES
+    double ret=0,dist;
+    double minDist=sqrt(x0*x0+y0*y0);
     int x,y;
-    for(x=MIN_ITER_X; x<MAX_ITER_X; x++) {
-        for(y=MIN_ITER_Y; y<MAX_ITER_Y; y++) {
-            if(x0!=0||y0!=0||x!=0||y!=0)
-                ret+=K_COEFF*q1*q2*(y0+y*Y_SIZE)/( ( (x0+x*X_SIZE)*(x0+x*X_SIZE)+(y0+y*Y_SIZE)*(y0+y*Y_SIZE) ) *
-                                                   sqrt( (x0+x*X_SIZE)*(x0+x*X_SIZE)+(y0+y*Y_SIZE)*(y0+y*Y_SIZE) ) );
+    // Default is the non-wrapping distance of two charges
+    if(x0!=0||y0!=0) ret=K_COEFF*q1*q2*(y0)/( ( (x0)*(x0)+(y0)*(y0) ) * sqrt( (x0)*(x0)+(y0)*(y0) ) );
+    // Check if closest charge is wrapped to the other side
+    for(x=-1; x<2; x++) {
+        for(y=-1; y<2; y++) {
+            if(x0!=0||y0!=0||x!=0||y!=0) {
+                dist=sqrt( (x0+x*X_SIZE)*(x0+x*X_SIZE)+(y0+y*Y_SIZE)*(y0+y*Y_SIZE) );
+                if(dist<minDist) { ret=K_COEFF*q1*q2*(y0+y*Y_SIZE)/( dist*dist*dist ); minDist=dist; }
+            }
         }
     }
-#else
-    if(x0!=0||y0!=0) ret+=K_COEFF*q1*q2*(y0)/( ( (x0)*(x0)+(y0)*(y0) ) * sqrt( (x0)*(x0)+(y0)*(y0) ) );
-#endif // INFINTE_CHARGES
     return ret;
 }
+/** Setting everyting to default state, tries to read from #CONFIG_FILE\n
+  * In #CONFIG_FILE
+  *   -     1. line: Window console size in characters
+  *   -     2. line: Number of Charges
+  *   - other lines: ChargeSize StartingXPos StartingYPos
+  */
 void DefaultState(int x1,int y1,int x2,int y2) {
     FILE *read=NULL;
     int error=1,i=0;
@@ -95,11 +108,13 @@ void DefaultState(int x1,int y1,int x2,int y2) {
         }
     }
 #else
-    read=fopen("default.ini","rt");
+    read=fopen(CONFIG_FILE,"rt");
     FileReadOK=0;
     if(read!=NULL) {
         error=0;
-        if(fscanf(read,"%d",&NumOfCharges)==1) {
+        if(fscanf(read,"%*s%d%*c%d",&X_SIZE,&Y_SIZE)==2) {}
+        else error=1;
+        if(!error && fscanf(read,"%*s%d",&NumOfCharges)==1) {
             Charges = (struct _CHARGES*)calloc(NumOfCharges,sizeof(struct _CHARGES));
         } else error=1;
         while(!error && i!=NumOfCharges && fscanf(read,"%d %lf %lf",&Charges[i].ElecChrg,&Charges[i].PosX,&Charges[i].PosY)==3) {
@@ -114,31 +129,33 @@ void DefaultState(int x1,int y1,int x2,int y2) {
         fclose(read);
     }
     if(error) {
-        NumOfCharges=CHARGES_SIZE;
+        X_SIZE=DEF_X_SIZE;
+        Y_SIZE=DEF_Y_SIZE;
+        NumOfCharges=DEF_CHARGES_SIZE;
         Charges = (struct _CHARGES*)calloc(NumOfCharges,sizeof(struct _CHARGES));
-        Charges[0]=(struct _CHARGES) {
-            100  ,x1,y1,0,0
-        };
-        Charges[1]=(struct _CHARGES) {
-            1000 ,x2,y2,0,0
-        };
-        Charges[2]=(struct _CHARGES) {
-            -5000,50,50,0,0
-        };
-        Charges[3]=(struct _CHARGES) {
-            -6   ,70,20,0,0
-        };
+        Charges[0]=(struct _CHARGES) {100  ,x1,y1,0,0};
+        Charges[1]=(struct _CHARGES) {1000 ,x2,y2,0,0};
+        Charges[2]=(struct _CHARGES) {-5000,50,50,0,0};
+        Charges[3]=(struct _CHARGES) {-6   ,70,20,0,0};
     }
 #endif // IN_A_RECTANGLE
 }
+/** Main calculation of Charge velocities with #CalculateForceX and #CalculateForceY */
 void CalculateState() {
-    int i,j,k,l,mx=0,my=0,bound,Coll=0;
-    double dt=1.0/FPS;
+    int i,j,k,l,mx=0,my=0,bound,Coll=0,Static[NumOfCharges];
+    double dt=1.0/FPS; // Delta time, depends on FPS
+    // Check if there are static charges, these charges are on top of each other and their position will not change
+    for(i=0; i<NumOfCharges; i++) {
+        Static[i]=0;
+        for(j=0; j<NumOfCharges; j++) {
+            if(i!=j&&Charges[i].PosX==Charges[j].PosX && Charges[i].PosY==Charges[j].PosY) Static[i]=1;
+        }
+    }
     for(i=0; i<NumOfCharges; i++) {
         for(j=0; j<NumOfCharges; j++) {
             if(Charges[i].ElecChrg!=0) {
                 Coll=0;
-                bound=log10(abs(Charges[i].ElecChrg)+abs(Charges[j].ElecChrg));
+                bound=log10(abs(Charges[i].ElecChrg)+abs(Charges[j].ElecChrg)); //Distance where charges will bond together
                 for(k=-bound; k<bound+1; k++) {
                     for(l=-bound; l<bound+1; l++) {
                         mx=(int)Charges[j].PosX+l;
@@ -147,13 +164,14 @@ void CalculateState() {
                         else if(mx>=X_SIZE) mx-=X_SIZE;
                         if     (my<0)       my+=Y_SIZE;
                         else if(my>=Y_SIZE) my-=Y_SIZE;
-                        if(i!=j && my==(int)Charges[i].PosY && mx==(int)Charges[i].PosX ) Coll=1;
+                        if(my==(int)Charges[i].PosY && mx==(int)Charges[i].PosX ) Coll=1;
                     }
                 }
-                if(!Coll) {
+                if(!Coll&&Static[i]==0) {
+                    /* ma=F => mdv/dt=F => dv=Force/m*dt */
                     Charges[i].VelX+=CalculateForceX(Charges[j].ElecChrg,-Charges[i].ElecChrg,Charges[j].PosX-Charges[i].PosX,Charges[j].PosY-Charges[i].PosY)/abs(Charges[i].ElecChrg)*dt;
                     Charges[i].VelY+=CalculateForceY(Charges[j].ElecChrg,-Charges[i].ElecChrg,Charges[j].PosX-Charges[i].PosX,Charges[j].PosY-Charges[i].PosY)/abs(Charges[i].ElecChrg)*dt;
-                } else {
+                } else if(Static[i]==0&&Static[j]==0) {
 //                    Charges[i].VelX=Charges[j].VelX=(Charges[i].VelX+Charges[j].VelX)/2;
 //                    Charges[i].VelY=Charges[j].VelY=(Charges[i].VelY+Charges[j].VelY)/2;
                     /* Impulse m1*v1+m2*v2=(m1+m2)*vnew */
@@ -164,6 +182,7 @@ void CalculateState() {
         }
     }
 }
+/** This updates the charges' positions and wraps them if necessary */
 void UpdateState() {
     int i;
     for(i=0; i<NumOfCharges; i++) {
@@ -175,11 +194,12 @@ void UpdateState() {
         else    Charges[i].PosY+=Charges[i].VelY-Y_SIZE;
     }
 }
+/** Help menu */
 void HelpMenu() {
     TCOD_console_set_default_background(NULL,TCOD_darker_grey);
-    TCOD_console_rect(NULL,X_SIZE/2-20,Y_SIZE/2-20,40,30,1,TCOD_BKGND_SET);
+    TCOD_console_rect(NULL,X_SIZE/2-20,Y_SIZE/2-20,40,32,1,TCOD_BKGND_SET);
     TCOD_console_set_alignment(NULL,TCOD_CENTER);
-    TCOD_console_print_rect(NULL,X_SIZE/2,Y_SIZE/2-19,40,30,"- INSTRUCTIONS -\n\n\n"
+    TCOD_console_print_rect(NULL,X_SIZE/2,Y_SIZE/2-19,40,31,"- INSTRUCTIONS -\n\n\n"
                             "      H  -  HELP          \n"
                             "      P  -  PAUSE         \n"
                             "      R  -  RESET         \n"
@@ -191,16 +211,18 @@ void HelpMenu() {
                             " LEFTARROW - DECREMENT MOUSEFORCE BY 1\n\n"
                             " Left mouse button  attracts charges\n"
                             "Right mouse button distracts charges\n\n\n"
-                            "-In pause-\n"
+                            "-In PAUSE MODE-\n"
                             "Set the mouse mode with the mwheel\n"
                             "Default mouse mode is select/del  \n\n\n"
-                            "--In default.ini file--\n"
-                            "        1.line: Number of charges   \n"
+                            "--In %s file--\n"
+                            "   set Window size in characters    \n"
+                            "   set Number of charges            \n"
                             "   other lines: ChargeSize X0 Y0    \n\n\n"
                             "                     Made by: Akos Kote \n"
-                            "                            2015 - v1.0 \n");
+                            "                            2015 - %s \n",CONFIG_FILE,VERSION);
     TCOD_console_set_alignment(NULL,TCOD_LEFT);
 }
+/** Background color effect for charges' aura and mouse */
 void RadiusEffect(int x, int y, double r,TCOD_color_t col) {
     int i,j;
     double rad;
@@ -217,6 +239,7 @@ void RadiusEffect(int x, int y, double r,TCOD_color_t col) {
         }
     }
 }
+/** Helping function for #RefreshPauseScreen to only refresh down right indicators of the screen */
 void PrintDownRightStatus() {
     TCOD_console_set_default_background(NULL,TCOD_darker_grey);
     TCOD_console_set_alignment(NULL,TCOD_RIGHT);
@@ -226,6 +249,7 @@ void PrintDownRightStatus() {
     TCOD_console_set_alignment(NULL,TCOD_LEFT);
     TCOD_console_set_default_background(NULL,TCOD_black);
 }
+/** Main function for printing everything on screen */
 void PrintState() {
     int i,j;
     TCOD_console_set_default_foreground(NULL,TCOD_white);
@@ -246,8 +270,8 @@ void PrintState() {
     TCOD_console_set_default_foreground(NULL,TCOD_white);
     if(TCOD_sys_elapsed_milli()<=6000) {
         HelpMenu();
-        if(FileReadOK) TCOD_console_print(NULL,0,0,"Successful file read from default.ini");
-        else           TCOD_console_print(NULL,0,0,"File read from default.ini has failed! Loading default state...");
+        if(FileReadOK) TCOD_console_print(NULL,0,0,"Successful file read from %s",CONFIG_FILE);
+        else           TCOD_console_print(NULL,0,0,"File read from %s has failed! Loading default state...",CONFIG_FILE);
     }
     TCOD_console_set_background_flag(NULL,TCOD_BKGND_SET);
     for(i=0,j=0; i<NumOfCharges; i++,j+=2) {
@@ -259,12 +283,13 @@ void PrintState() {
     PrintDownRightStatus();
     TCOD_console_flush();
 }
-/** Halt program for delay (TimeStep) amount (in ms) */
+/** Halt program for delay (#TimeStep) amount (in ms) */
 inline void Wait(uint32*Time) {
     uint32 CurrentTime = TCOD_sys_elapsed_milli();
     if(*Time>CurrentTime) TCOD_sys_sleep_milli(*Time-CurrentTime);
     *Time=TCOD_sys_elapsed_milli()+TimeStep;
 }
+/** Helping function to display red PAUSE text */
 inline void DisplayPause() {
     TCOD_console_set_alignment(NULL,TCOD_CENTER);
     TCOD_console_set_default_background(NULL,TCOD_red);
@@ -272,6 +297,7 @@ inline void DisplayPause() {
     TCOD_console_set_default_background(NULL,TCOD_black);
     TCOD_console_set_alignment(NULL,TCOD_LEFT);
 }
+/** Helping function to display current editing mode */
 inline void DisplayMState() {
     TCOD_console_set_alignment(NULL,TCOD_CENTER);
     TCOD_console_set_default_background(NULL,TCOD_blue);
@@ -292,6 +318,7 @@ inline void DisplayMState() {
     TCOD_console_set_default_background(NULL,TCOD_black);
     TCOD_console_set_alignment(NULL,TCOD_LEFT);
 }
+/** Helping function which will reset everything (calls #DefaultState) */
 inline void Reset() {
     DefaultState(15,15,80,50);
 }
@@ -318,6 +345,7 @@ int InputHandle(TCOD_key_t *key,const char *text,const char *suff) {
     TCOD_sys_wait_for_event(TCOD_EVENT_KEY_RELEASE,NULL,NULL,1);
     return Sign*Input;
 }
+/** Function for setting new delay (#TimeStep) (calls #InputHandle) */
 void SetDelay(uint32 *TimeStep) {
     TCOD_key_t key;
     int Delay=0;
@@ -325,6 +353,7 @@ void SetDelay(uint32 *TimeStep) {
     Delay = InputHandle(&key,"Enter new delay (ms): ","ms");
     if(key.vk!=TCODK_ESCAPE) *TimeStep=Delay;
 }
+/** Function for setting new #MouseForce (calls #InputHandle) */
 void SetMouseForce(int *MouseForce) {
     TCOD_key_t key;
     int Force=0;
@@ -332,6 +361,7 @@ void SetMouseForce(int *MouseForce) {
     Force = InputHandle(&key,"Enter new mouse force: "," ");
     if(key.vk!=TCODK_ESCAPE) *MouseForce=Force;
 }
+/** When mouse event happened, attracts/distracts charges */
 void MouseEvent() {
     int i;
     if(mouse.lbutton) {
@@ -359,11 +389,13 @@ void CheckForEvent(uint32 *Time,TCOD_key_t *key,TCOD_mouse_t *mouse,TCOD_event_t
     *Time=TCOD_sys_elapsed_milli()+TimeStep;
     if(*event==TCOD_EVENT_MOUSE_PRESS||TCOD_EVENT_MOUSE_MOVE) MouseEvent();
 }
+/** Helping function for #Pause */
 inline void RefreshPauseScreen() {
     PrintDownRightStatus();
     TCOD_console_flush();
     TCOD_sys_wait_for_event(TCOD_EVENT_KEY,NULL,NULL,1); /*Catch key event, clear input buffer*/
 }
+/** Helping function for #Pause */
 inline void ReprintPauseScreen() {
     mouse.lbutton=mouse.rbutton=0; /*Disable radius effect print*/
     PrintState();
@@ -371,10 +403,12 @@ inline void ReprintPauseScreen() {
     DisplayMState();
     TCOD_console_flush();
 }
+/** Selecting/Deleting mode, left click */
 void MSelectDelLeft(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     int i;
     for(i=0,*sel=0; i<NumOfCharges; i++) {
         if(*prevX==(int)Charges[i].PosX&&*prevY==(int)Charges[i].PosY) {
+            /* Default colors */
             if(Charges[i].ElecChrg>=0) {
                 TCOD_console_set_char_foreground(NULL,Charges[i].PosX,Charges[i].PosY,TCOD_red);
                 TCOD_console_set_default_background(NULL,TCOD_red);
@@ -385,6 +419,7 @@ void MSelectDelLeft(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
             TCOD_console_rect(NULL,X_SIZE-27,i*2,27,2,0,TCOD_BKGND_SET);
         }
         if(mouse.cx==(int)Charges[i].PosX&&mouse.cy==(int)Charges[i].PosY) {
+            /* Selection color */
             TCOD_console_set_char_foreground(NULL,Charges[i].PosX,Charges[i].PosY,TCOD_green);
             TCOD_console_set_default_background(NULL,TCOD_darker_green);
             TCOD_console_rect(NULL,X_SIZE-27,i*2,27,2,0,TCOD_BKGND_SET);
@@ -395,6 +430,7 @@ void MSelectDelLeft(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     *prevY=mouse.cy;
     TCOD_console_flush();
 }
+/** Selecting/Deleting mode, right click */
 void MSelectDelRight(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     int i,j,Enable=0;
     struct _CHARGES* temp;
@@ -422,6 +458,7 @@ void MSelectDelRight(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
         *sel=0;
     }
 }
+/** Adding charge mode */
 void MAddCharge(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     int i;
     struct _CHARGES* temp;
@@ -443,6 +480,7 @@ void MAddCharge(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     Charges=temp;
     ReprintPauseScreen();
 }
+/** Moving charge mode */
 void MMoveCharge(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     int i;
     TCOD_mouse_t mouse;
@@ -457,20 +495,22 @@ void MMoveCharge(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
         TCOD_sys_sleep_milli(1000/FPS);
     } while(mouse.lbutton);
 }
+/** Setting charge velocity mode */
 void MSetVelCharge(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     int i,Xvel=-1,Yvel=-1;
     TCOD_key_t key;
     TCOD_sys_wait_for_event(TCOD_EVENT_MOUSE_RELEASE,NULL,NULL,1); /* Catch release event */
     for(i=0; i<NumOfCharges; i++) {
         if(mouse.cx==(int)Charges[i].PosX&&mouse.cy==(int)Charges[i].PosY) {
-            Xvel=InputHandle(&key,"Set x velocity: "," ");
-            if(key.vk!=TCODK_ESCAPE) Charges[i].VelX=Xvel;
-            Yvel=InputHandle(&key,"Set y velocity: "," ");
-            if(key.vk!=TCODK_ESCAPE) Charges[i].VelY=Yvel;
+            Xvel=InputHandle(&key,"Set x velocity: ","/10");
+            if(key.vk!=TCODK_ESCAPE) Charges[i].VelX=Xvel/10.0;
+            Yvel=InputHandle(&key,"Set y velocity: ","/10");
+            if(key.vk!=TCODK_ESCAPE) Charges[i].VelY=Yvel/10.0;
         }
     }
     ReprintPauseScreen();
 }
+/** Initialisation for #Control setting function pointers */
 inline void InitControl(CONTROL Control[2][4]) {
     Control [MLEFTCLCK][SELECT_DEL] .FuncCall=MSelectDelLeft;
     Control [MLEFTCLCK][ADD_CHRG]   .FuncCall=MAddCharge;
@@ -481,6 +521,7 @@ inline void InitControl(CONTROL Control[2][4]) {
     Control[MRIGHTCLCK][MOVE_CHRG]  .FuncCall=NULL;
     Control[MRIGHTCLCK][SETVEL_CHRG].FuncCall=NULL;
 }
+/** Pause mode */
 void Pause(TCOD_key_t *key,TCOD_mouse_t *mouse,TCOD_event_t *event) {
     int prevX=0,prevY=0,sel=0,ElecChrg=0,indx=0;
     CONTROL Control[2][4]; /*2 mouse click,4 event state*/
@@ -528,6 +569,7 @@ void Pause(TCOD_key_t *key,TCOD_mouse_t *mouse,TCOD_event_t *event) {
         }
     } while(!(key->c=='p'&&*event==TCOD_EVENT_KEY_RELEASE)&&key->vk!=TCODK_ESCAPE&&!TCOD_console_is_window_closed());
 }
+/** Help menu */
 void Help(TCOD_key_t *key) {
     DisplayPause();
     HelpMenu();
@@ -539,13 +581,13 @@ void Help(TCOD_key_t *key) {
     } while(key->pressed);
     TCOD_sys_wait_for_event(TCOD_EVENT_KEY_RELEASE,key,NULL,1); /*Wait for any key release*/
 }
-
+/** main function loop */
 int main(int argc,char* argv[]) {
+    Charges=NULL;
+    Reset();
     TCOD_console_init_root(X_SIZE,Y_SIZE,"Universe",0,TCOD_RENDERER_SDL);
     TCOD_sys_set_fps(FPS);
     TimeStep=Time=TIME;
-    Charges=NULL;
-    Reset();
     do {
         CalculateState();
         UpdateState();
