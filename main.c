@@ -31,6 +31,7 @@
 #define STEP_Y (Y_SIZE/10)
 
 struct _CHARGES {
+    int Static;       /**< 1 if charge is unmovable */
     int ElecChrg;     /**< Each charges' Electric charge (multiplier) with sign (+/-) */
     double PosX,PosY; /**< Each charges' position (x,y) */
     double VelX,VelY; /**< Each charges' velocity (x,y) */
@@ -91,6 +92,16 @@ double CalculateForceY(int q1,int q2,double x0,double y0) {
     }
     return ret;
 }
+inline void CheckIfStatic() {
+    int i,j;
+    // Check if there are static charges, these charges are on top of each other and their position will not change (they have 0 velocity)
+    for(i=0; i<NumOfCharges; i++) {
+        Charges[i].Static=Charges[i].VelX=Charges[i].VelY=0;
+        for(j=0; j<NumOfCharges; j++) {
+            if(i!=j&&(int)Charges[i].PosX==(int)Charges[j].PosX && (int)Charges[i].PosY==(int)Charges[j].PosY) Charges[i].Static = 1;
+        }
+    }
+}
 /** Setting everyting to default state, tries to read from #CONFIG_FILE\n
   * In #CONFIG_FILE
   *   -     1. line: Window console size in characters
@@ -108,6 +119,7 @@ void DefaultState(int x1,int y1,int x2,int y2) {
     for(x=STEP_X/2,i=0; x<X_SIZE; x+=STEP_X) {
         for(y=STEP_Y/2; y<Y_SIZE; y+=STEP_Y,i++) {
             if(i>=NumOfCharges) break;
+            Charges[i].Static=0;
             Charges[i].PosX=x;
             Charges[i].PosY=y;
             Charges[i].VelX=Charges[i].VelY=0;
@@ -125,7 +137,7 @@ void DefaultState(int x1,int y1,int x2,int y2) {
             Charges = (struct _CHARGES*)calloc(NumOfCharges,sizeof(struct _CHARGES));
         } else error=1;
         while(!error && i!=NumOfCharges && fscanf(read,"%d %lf %lf",&Charges[i].ElecChrg,&Charges[i].PosX,&Charges[i].PosY)==3) {
-            Charges[i].VelX=Charges[i].VelY=0;
+            Charges[i].Static=Charges[i].VelX=Charges[i].VelY=0;
             i++;
         }
         if(!error && i!=NumOfCharges) {
@@ -140,24 +152,18 @@ void DefaultState(int x1,int y1,int x2,int y2) {
         Y_SIZE=DEF_Y_SIZE;
         NumOfCharges=DEF_CHARGES_SIZE;
         Charges = (struct _CHARGES*)calloc(NumOfCharges,sizeof(struct _CHARGES));
-        Charges[0]=(struct _CHARGES) {100  ,x1,y1,0,0};
-        Charges[1]=(struct _CHARGES) {1000 ,x2,y2,0,0};
-        Charges[2]=(struct _CHARGES) {-5000,50,50,0,0};
-        Charges[3]=(struct _CHARGES) {-6   ,70,20,0,0};
+        Charges[0]=(struct _CHARGES) {0,100  ,x1,y1,0,0};
+        Charges[1]=(struct _CHARGES) {0,1000 ,x2,y2,0,0};
+        Charges[2]=(struct _CHARGES) {0,-5000,50,50,0,0};
+        Charges[3]=(struct _CHARGES) {0,-6   ,70,20,0,0};
     }
+    CheckIfStatic();
 #endif // IN_A_RECTANGLE
 }
 /** Main calculation of Charge velocities with #CalculateForceX and #CalculateForceY */
 void CalculateState() {
-    int i,j,k,l,mx=0,my=0,bound,Coll=0,Static[NumOfCharges];
+    int i,j,k,l,mx=0,my=0,bound,Coll=0;
     double dt=1.0/FPS; // Delta time, depends on FPS
-    // Check if there are static charges, these charges are on top of each other and their position will not change
-    for(i=0; i<NumOfCharges; i++) {
-        Static[i]=0;
-        for(j=0; j<NumOfCharges; j++) {
-            if(i!=j&&Charges[i].PosX==Charges[j].PosX && Charges[i].PosY==Charges[j].PosY) Static[i]=1;
-        }
-    }
     for(i=0; i<NumOfCharges; i++) {
         for(j=0; j<NumOfCharges; j++) {
             if(Charges[i].ElecChrg!=0) {
@@ -174,11 +180,11 @@ void CalculateState() {
                         if(my==(int)Charges[i].PosY && mx==(int)Charges[i].PosX ) Coll=1;
                     }
                 }
-                if(!Coll&&Static[i]==0) {
+                if(!Coll&&Charges[i].Static==0) {
                     /* ma=F => mdv/dt=F => dv=Force/m*dt */
                     Charges[i].VelX+=CalculateForceX(Charges[j].ElecChrg,-Charges[i].ElecChrg,Charges[j].PosX-Charges[i].PosX,Charges[j].PosY-Charges[i].PosY)/abs(Charges[i].ElecChrg)*dt;
                     Charges[i].VelY+=CalculateForceY(Charges[j].ElecChrg,-Charges[i].ElecChrg,Charges[j].PosX-Charges[i].PosX,Charges[j].PosY-Charges[i].PosY)/abs(Charges[i].ElecChrg)*dt;
-                } else if(Static[i]==0&&Static[j]==0) {
+                } else if(Charges[i].Static==0&&Charges[j].Static==0) {
 //                    Charges[i].VelX=Charges[j].VelX=(Charges[i].VelX+Charges[j].VelX)/2;
 //                    Charges[i].VelY=Charges[j].VelY=(Charges[i].VelY+Charges[j].VelY)/2;
                     /* Impulse m1*v1+m2*v2=(m1+m2)*vnew */
@@ -461,6 +467,7 @@ void MSelectDelRight(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
         NumOfCharges--;
         free(Charges);
         Charges=temp;
+        CheckIfStatic();
         ReprintPauseScreen();
         *sel=0;
     }
@@ -477,14 +484,15 @@ void MAddCharge(int* prevX,int* prevY,int* sel,int* ElecChrg,int* indx) {
     for(i=0; i<NumOfCharges; i++)
         temp[i]=Charges[i];
     if     (mouse.lbutton) temp[i]=(struct _CHARGES) {
-        *ElecChrg ,mouse.cx,mouse.cy,0,0
+        0,*ElecChrg ,mouse.cx,mouse.cy,0,0
     };
     else if(mouse.rbutton) temp[i]=(struct _CHARGES) {
-        -(*ElecChrg),mouse.cx,mouse.cy,0,0
+        0,-(*ElecChrg),mouse.cx,mouse.cy,0,0
     };
     NumOfCharges++;
     free(Charges);
     Charges=temp;
+    CheckIfStatic();
     ReprintPauseScreen();
 }
 /** Moving charge mode */
